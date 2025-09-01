@@ -14,13 +14,13 @@ TBO is a lightweight layer for **obfuscating Python error tracebacks**. It is in
 ## Screenshots
 ### Main App
 ![Main App](https://i.imgur.com/CnCMulV.png)
-### Post-Obfuscation
+### Post-Obfuscation Source & Tracelog
 ![Post Obfuscation](https://i.imgur.com/FEhPN9Y.png)
-### Crashed App Example (Obfuscated Tracelog)
+### Crashed App Example (Obfuscated Traceback)
 ![Crashed App Example](https://i.imgur.com/Uxa1AgJ.png)
-### Crashed App Example (Encrypted & Obfuscated Tracelog)
+### Crashed App Example (Encrypted & Obfuscated Traceback)
 ![Crashed App Example](https://i.imgur.com/fT43If8.png)
-### De-obfuscation
+### De-obfuscation (Original Traceback)
 ![DeObfuscation](https://i.imgur.com/Tlhwerg.png)
 
 ---
