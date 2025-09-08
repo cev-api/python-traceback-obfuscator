@@ -1,4 +1,4 @@
-# TBO — Traceback Obfuscator & Traceback Deobfuscator
+# TBO — Traceback Obfuscator & Deobfuscator
 
 **A Free alternative to the traceback-protection features in Pyarmor (Paid) and Nuitka (Commercial).**  
 
@@ -13,7 +13,7 @@ TBO is a lightweight layer for **obfuscating Python error tracebacks**. It is in
 
 ## Screenshots
 ### Main App
-![Main App](https://i.imgur.com/CnCMulV.png)
+![Main App](https://i.imgur.com/MJRM44T.png)
 ### Post-Obfuscation Source & Tracelog
 ![Post Obfuscation](https://i.imgur.com/FEhPN9Y.png)
 ### Crashed App Example (Obfuscated Traceback)
@@ -21,7 +21,7 @@ TBO is a lightweight layer for **obfuscating Python error tracebacks**. It is in
 ### Crashed App Example (Encrypted & Obfuscated Traceback)
 ![Crashed App Example](https://i.imgur.com/fT43If8.png)
 ### De-obfuscation (Original Traceback)
-![DeObfuscation](https://i.imgur.com/Tlhwerg.png)
+![DeObfuscation](https://i.imgur.com/KbIh1AP.png)
 
 ---
 
@@ -51,16 +51,6 @@ TBO replaces that with an encrypted line that only you (with a key and a map) ca
 
 Used together with free PyArmor or Nuitka builds, even if someone decrypts the line, the names they see are still scrambled so you can fix the bug without exposing your code or its functionality.
 
-## Project layout
-
-This repository contains **two console apps**:
-
-- **TBO — Traceback Obfuscator** (`tbo.py`):  
-  AST‑based symbol aliasing + optional **encrypted‑traceback** hook injection; emits a **tracelog**.
-- **Traceback Deobfuscator** (`tbd-o.py`):  
-  Decrypts TBO’s Base64 traceback lines and/or **de‑aliases** names back to originals via the tracelog.
-
----
 
 ## How it works (high level)
 
@@ -84,7 +74,7 @@ key = PBKDF2-HMAC-SHA256(secret, salt, 100000)
 - Exit: process terminates with status `1` after writing the line.
 
 ### 3) Offline recovery (support/debug)
-Use `tbd-o.py` to **decrypt** the Base64 line(s) and **de‑alias** names via the tracelog. Can also run in **de‑alias‑only** mode if you already have plaintext logs.
+Use the app to **decrypt** the Base64 line(s) and **de‑alias** names via the tracelog. Can also run in **de‑alias‑only** mode if you already have plaintext logs.
 
 ---
 
@@ -108,9 +98,8 @@ Use `tbd-o.py` to **decrypt** the Base64 line(s) and **de‑alias** names via th
 ## Requirements
 
 - **Python 3.8+** recommended
-- `tbo.py`: `astunparse` on Python < 3.9 (`pip install astunparse`)  
+- `astunparse` on Python < 3.9 (`pip install astunparse`)  
   *(On 3.9+, you can use `ast.unparse`.)*
-- `tbd-o.py`: standard library only
 
 ---
 
