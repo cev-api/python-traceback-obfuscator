@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
 
-import ast
-import astunparse  # or use ast.unparse if needed?
-import random
-import string
-import builtins
-import base64
 import os
 import sys
 import re
+import base64
+import hashlib
+import getpass
+import ast
+import random
+import string
+import builtins
+
+try:
+    import astunparse
+except Exception:
+    astunparse = None
 
 # ========================
-# UI 
+# UI helpers
 # ========================
 
 def _lerp(a, b, t):
     return int(a + (b - a) * t)
 
-def make_multi_gradient(stops, steps):
 
+def make_multi_gradient(stops, steps):
     if steps <= 1:
         return [stops[0]]
     segs = len(stops) - 1
@@ -39,7 +45,10 @@ def make_multi_gradient(stops, steps):
 
 
 def print_banner() -> str:
-    sys.stdout.write("\x1b[8;{rows};{cols}t".format(rows=32, cols=130))
+    try:
+        sys.stdout.write("\x1b[8;{rows};{cols}t".format(rows=32, cols=130))
+    except Exception:
+        pass
     banner = r"""
 ░▒▓████████▓▒░▒▓███████▓▒░ ░▒▓██████▓▒░  
    ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
@@ -48,9 +57,8 @@ def print_banner() -> str:
    ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
    ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░ 
    ░▒▓█▓▒░   ░▒▓███████▓▒░ ░▒▓██████▓▒░  
-   Traceback Obfuscator v1.6 by CevAPI
-   
-"""
+    Traceback Obfuscator by CevAPI v1.7
+   """
     os.system("")
     faded_banner = ""
 
@@ -65,22 +73,23 @@ def print_banner() -> str:
     for (line, (r, g, b)) in zip(lines, colors):
         faded_banner += (f"\033[38;2;{r};{g};{b}m{line}\033[0m\n")
     return faded_banner
-    
+
 colors = [
     (179, 183, 242),
     (183, 226, 240),
     (183, 226, 240)
 ]
 colors2 = [
-    (255, 196, 0),   
-    (255, 214, 70),  
-    (255, 240, 140)  
+    (255, 196, 0),
+    (255, 214, 70),
+    (255, 240, 140)
 ]
 colors3 = [
-    (26, 115, 52),  
-    (76, 175, 80),  
-    (86, 185, 90),  
+    (26, 115, 52),
+    (76, 175, 80),
+    (86, 185, 90),
 ]
+
 
 def gradient_text(text: str, colors: list) -> str:
     os.system("")
@@ -95,17 +104,40 @@ def gradient_text(text: str, colors: list) -> str:
             gradient += char
     return gradient
 
-##############################################################################
-# LOGIC CONFIG
-##############################################################################
+
+def press_enter_to_continue():
+    try:
+        input("\nPress Enter To Continue...")
+    except EOFError:
+        pass
+
+
+def choose_from_list(title, items):
+    if title:
+        print(title)
+    for i, it in enumerate(items, 1):
+        print("%d. %s" % (i, it))
+    print("")
+    while True:
+        s = input("Enter The Number [1-%d]: " % len(items)).strip()
+        if not s.isdigit():
+            print("Please Enter A Valid Number.")
+            continue
+        idx = int(s)
+        if 1 <= idx <= len(items):
+            return items[idx - 1]
+        print("Choice Out Of Range. Try Again.")
+
+# ========================
+# obfuscator
+# ========================
 
 ALL_BUILTINS = set(dir(builtins))
-EXCLUDE_NAMES = []  # Populate via user input
-ALIAS_PREFIX = "TBO_"  # Override via user input
-
-# New globals for sequential aliasing
+EXCLUDE_NAMES = []
+ALIAS_PREFIX = "TBO_"
 USE_SEQUENTIAL = False
 alias_counter = 1
+
 
 def random_alias(prefix=None, length=5):
     global alias_counter, USE_SEQUENTIAL
@@ -120,18 +152,13 @@ def random_alias(prefix=None, length=5):
         suffix = ''.join(random.choices(digits, k=length))
         return prefix + suffix
 
+
 def starts_with_double_underscore(name: str) -> bool:
     return name.startswith("__")
 
-##############################################################################
-# CLOSURE CONVERSION SUPPORT
-##############################################################################
-
-# Collects names used (in Load context) and defined (as parameters or assigned)
-# within a function, without descending into nested functions.
+# Closure conversion and renamer classes (copied from original tbo.py)
 
 class FreeVarsCollector(ast.NodeVisitor):
-
     def __init__(self):
         self.used = set()
         self.defined = set()
@@ -139,7 +166,6 @@ class FreeVarsCollector(ast.NodeVisitor):
         self.nonlocals = set()
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        # params are defined
         for arg in node.args.args:
             self.defined.add(arg.arg)
         if node.args.vararg:
@@ -148,13 +174,11 @@ class FreeVarsCollector(ast.NodeVisitor):
             self.defined.add(arg.arg)
         if node.args.kwarg:
             self.defined.add(node.args.kwarg.arg)
-        # walk body but do NOT enter nested defs/lambdas/classes
         for stmt in node.body:
             if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
                 self.visit(stmt)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
-        # mirror FunctionDef behaviour
         for arg in node.args.args:
             self.defined.add(arg.arg)
         if node.args.vararg:
@@ -179,9 +203,7 @@ class FreeVarsCollector(ast.NodeVisitor):
         self.visit(node.body)
 
     def visit_ClassDef(self, node: ast.ClassDef):
-        # class name is defined in the outer scope, but nested fns inside are out of scope here
         self.defined.add(node.name)
-        # do not descend into class body for free-var calc of a function
 
     def visit_Global(self, node: ast.Global):
         for name in node.names:
@@ -199,13 +221,10 @@ class FreeVarsCollector(ast.NodeVisitor):
         elif isinstance(node.ctx, (ast.Store, ast.Del)):
             self.defined.add(node.id)
 
-    # comprehensions bind targets; handle them explicitly
     def visit_comprehension(self, node: ast.comprehension):
-        # walk the iter/ifs to find any used names
         self.visit(node.iter)
         for if_ in node.ifs:
             self.visit(if_)
-        # mark targets as defined
         self._mark_targets_defined(node.target)
 
     def _mark_targets_defined(self, target):
@@ -214,18 +233,13 @@ class FreeVarsCollector(ast.NodeVisitor):
         elif isinstance(target, (ast.Tuple, ast.List)):
             for elt in target.elts:
                 self._mark_targets_defined(elt)
-        else:
-            # attributes/subscripts don't introduce new local names
-            pass
+
 
 def compute_free_vars(func_node: ast.AST) -> set:
-    #Return names that are used inside func_node but not defined there, excluding ones declared global/nonlocal.
     c = FreeVarsCollector()
     c.visit(func_node)
     return c.used - c.defined - c.globals - c.nonlocals
 
-# For nested functions (or lambdas) that capture free variables from an outer scope,
-# add those free variables as default arguments.
 class ClosureConversionTransformer(ast.NodeTransformer):
     def __init__(self):
         super().__init__()
@@ -237,7 +251,6 @@ class ClosureConversionTransformer(ast.NodeTransformer):
         if self.nesting > 1:
             free_vars = compute_free_vars(node)
             if free_vars:
-                # Append new parameters for each free variable with a default value.
                 for var in sorted(free_vars):
                     new_arg = ast.arg(arg=var, annotation=None)
                     node.args.args.append(new_arg)
@@ -271,31 +284,16 @@ class ClosureConversionTransformer(ast.NodeTransformer):
         self.nesting -= 1
         return node
 
-##############################################################################
-# UNIVERSAL RENAMER CLASS
-##############################################################################
-
-# Renames:
-#   - function names, class names, global/local vars, import aliases, builtin references
-# Skips:
-#   - function arguments in definitions (parameters)
-#   - keyword argument names in calls
-#   - names that start with '__'
-#   - strings in __all__
-#   - any item in EXCLUDE_NAMES
-# Records rename events in `self.changes`.
 class UniversalRenamer(ast.NodeTransformer):
     def __init__(self):
         super().__init__()
-        self.trace_log = {}    # old_name -> new_name
-        self.changes = []      # (lineno, old_name, new_name)
-        self.skip_all_strings = set()  # e.g. from __all__
-        self.func_params_stack = []  # Holds parameter names for current function scope
+        self.trace_log = {}
+        self.changes = []
+        self.skip_all_strings = set()
+        self.func_params_stack = []
 
     def visit_Attribute(self, node: ast.Attribute):
-        # First visit the value (e.g., FeatureRegistry)
         node.value = self.visit(node.value)
-        # Then, if the attribute name was renamed, rewrite it to the alias.
         old_attr = node.attr
         if (not starts_with_double_underscore(old_attr)
             and old_attr not in EXCLUDE_NAMES
@@ -304,14 +302,12 @@ class UniversalRenamer(ast.NodeTransformer):
         return node
 
     def _get_new_name(self, old_name, lineno=None):
-        # Generate or reuse a random alias, unless excluded or starts with __
         if starts_with_double_underscore(old_name):
             return old_name
         if old_name in EXCLUDE_NAMES:
             return old_name
-
         if old_name not in self.trace_log:
-            new_alias = random_alias()  # uses global ALIAS_PREFIX or sequential alias if enabled
+            new_alias = random_alias()
             self.trace_log[old_name] = new_alias
             if lineno is not None:
                 self.changes.append((lineno, old_name, new_alias))
@@ -320,9 +316,8 @@ class UniversalRenamer(ast.NodeTransformer):
             if lineno is not None:
                 self.changes.append((lineno, old_name, new_alias))
         return self.trace_log[old_name]
-        
+
     def visit_Global(self, node: ast.Global):
-        # Rename each global name in the global statement.
         new_names = []
         for name in node.names:
             if starts_with_double_underscore(name) or name in EXCLUDE_NAMES:
@@ -333,7 +328,6 @@ class UniversalRenamer(ast.NodeTransformer):
         return node
 
     def visit_Assign(self, node: ast.Assign):
-        # If we see __all__ = ["foo", "bar"], record those strings so we skip renaming them.
         if (len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
             and node.targets[0].id == "__all__"
@@ -349,7 +343,6 @@ class UniversalRenamer(ast.NodeTransformer):
             new_name = self._get_new_name(old_name, node.lineno)
             node.name = new_name
 
-        # Extract parameter names and push onto the stack so they are not renamed inside the body.
         param_names = set()
         if node.args:
             for arg in node.args.args:
@@ -363,7 +356,7 @@ class UniversalRenamer(ast.NodeTransformer):
         self.func_params_stack.append(param_names)
 
         old_args = node.args
-        node.args = None  # temporarily remove so generic_visit won't traverse them
+        node.args = None
         self.generic_visit(node)
         node.args = old_args
         self.func_params_stack.pop()
@@ -420,7 +413,6 @@ class UniversalRenamer(ast.NodeTransformer):
 
     def visit_Name(self, node: ast.Name):
         old_id = node.id
-        # If this name is a parameter in the current function scope, skip renaming.
         if self.func_params_stack and old_id in self.func_params_stack[-1]:
             return node
         if starts_with_double_underscore(old_id):
@@ -439,7 +431,7 @@ class UniversalRenamer(ast.NodeTransformer):
                 if old_id in ALL_BUILTINS:
                     node.id = self._get_new_name(old_id, getattr(node, "lineno", None))
         return node
-        
+
     def visit_Lambda(self, node: ast.Lambda):
         param_names = set(arg.arg for arg in node.args.args)
         if node.args.vararg:
@@ -448,15 +440,13 @@ class UniversalRenamer(ast.NodeTransformer):
             param_names.add(arg.arg)
         if node.args.kwarg:
             param_names.add(node.args.kwarg.arg)
-            
+
         self.func_params_stack.append(param_names)
         self.generic_visit(node)
         self.func_params_stack.pop()
         return node
-        
+
     def visit_arguments(self, node: ast.arguments):
-        # Process default values without protecting them with the parameter names.
-        # Temporarily remove the current function parameters from the protection stack.
         saved = None
         if self.func_params_stack:
             saved = self.func_params_stack.pop()
@@ -499,30 +489,12 @@ class UniversalRenamer(ast.NodeTransformer):
         self.visit(node.elt)
         return node
 
-##############################################################################
-# PIPELINE FUNCTIONS
-##############################################################################
+# Pipeline helpers
 
-def rename_everything(code: str):
-    tree = ast.parse(code)
-    tree = remove_docstrings(tree)  # Remove docstrings from the AST
-    # Run closure conversion to capture free variables in nested functions.
-    tree = ClosureConversionTransformer().visit(tree)
-    ast.fix_missing_locations(tree)
-    transformer = UniversalRenamer()
-    new_tree = transformer.visit(tree)
-    ast.fix_missing_locations(new_tree)
-    new_code = astunparse.unparse(new_tree)
-    return new_code, transformer.trace_log, transformer.changes
-
-# Recursively remove docstrings from modules, classes, and functions.
-# Only removes a string literal if it is the first statement in the body.
-# Uses ast.Constant if available (Python 3.8+), otherwise falls back to ast.Str.
 def remove_docstrings(node):
     if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.body:
         first = node.body[0]
         if isinstance(first, ast.Expr):
-            # If ast.Constant exists (Python 3.8+), use it
             if hasattr(ast, 'Constant'):
                 if isinstance(first.value, ast.Constant) and isinstance(first.value.value, str):
                     node.body.pop(0)
@@ -532,6 +504,24 @@ def remove_docstrings(node):
     for child in ast.iter_child_nodes(node):
         remove_docstrings(child)
     return node
+
+
+def rename_everything(code: str):
+    tree = ast.parse(code)
+    tree = remove_docstrings(tree)
+    tree = ClosureConversionTransformer().visit(tree)
+    ast.fix_missing_locations(tree)
+    transformer = UniversalRenamer()
+    new_tree = transformer.visit(tree)
+    ast.fix_missing_locations(new_tree)
+    if astunparse:
+        new_code = astunparse.unparse(new_tree)
+    else:
+        try:
+            new_code = ast.unparse(new_tree)
+        except Exception:
+            raise RuntimeError("astunparse or ast.unparse is required to run the renamer")
+    return new_code, transformer.trace_log, transformer.changes
 
 
 def insert_builtin_definitions(source: str, trace_log: dict) -> str:
@@ -557,6 +547,7 @@ def insert_builtin_definitions(source: str, trace_log: dict) -> str:
     lines[insert_idx:insert_idx] = import_lines + definitions
     return "".join(lines)
 
+
 def write_changes_log(changes_list, log_filename="trace_log.log"):
     changes_sorted = sorted(changes_list, key=lambda x: x[0])
     with open(log_filename, "w", encoding="utf-8") as f:
@@ -564,12 +555,13 @@ def write_changes_log(changes_list, log_filename="trace_log.log"):
             f.write(f"Line {lineno}: {old_name} -> {new_name}\n")
     print(f"TBO Log Saved: '{log_filename}'")
 
+
 def choose_py_file():
     py_files = [f for f in os.listdir('.') if f.endswith('.py') and os.path.isfile(f)]
     if not py_files:
         print("\nNo .Py Files Found In Current Directory.")
         return None
-        
+
     print(gradient_text(f"Select A Python File To Transform:", colors))
     for i, fname in enumerate(py_files, start=1):
         print(f"{i}. {fname}")
@@ -585,16 +577,16 @@ def choose_py_file():
         else:
             print("\nChoice Out Of Range. Try Again.")
 
+
 def fix_fstring_escapes(code_str: str) -> str:
-    # First, fix colon-backslash preceding a closing quote.
+    # Fix common problematic backslash sequences inside f-strings and other string literals
     code_str = re.sub(r'(:\\)(?=\')', r':\\\\', code_str)
-    # Next, fix any backslash preceding a {.
     code_str = re.sub(r'\\(?=\{)', r'\\\\', code_str)
-    # Finally, fix any single backslash preceding a letter (not one of valid escapes) with double backslash.
-    code_str = re.sub(r'(?<!\\)\\(?!\\|\'|\"|n|r|t|b|f|v|a)([A-Za-z])', r'\\\\\1', code_str)
+    # Use a raw triple-quoted string so we can include both single and double quotes safely
+    code_str = re.sub(r"""(?<!\\)\\(?!\\|'|"|n|r|t|b|f|v|a)([A-Za-z])""", r'\\\\\1', code_str)
     return code_str
 
-# helper for splitting strings into multiple base64 chunks for embedding
+
 def _split_for_embed(s, first=4, alt=3):
     parts = []
     i = 0
@@ -606,25 +598,18 @@ def _split_for_embed(s, first=4, alt=3):
         toggle = not toggle
     return parts
 
-# Inject a Nuitka-like encrypted traceback hook with obfuscated magic/secret
+
 def insert_encrypted_traceback_hook(source: str, enable: bool, use_env: bool, env_name: str, embedded_passphrase: str) -> str:
     if not enable:
         return source
-
     lines = source.splitlines(True)
     insert_idx = 1 if (lines and lines[0].startswith("#!")) else 0
-
-    # Build obfuscated MAGIC as base64 pieces (of "TBOTB1")
     magic_b64 = base64.b64encode(b'TBOTB1').decode('ascii')
     magic_parts = _split_for_embed(magic_b64)
-
-    # Build secret expression
     pre_secret_lines = []
     if use_env:
-        # env-only; no default plaintext key
         secret_line = f"_TBO_TB_SECRET = _tbo_os.environ.get('{env_name}')\n"
     else:
-        # embed passphrase as base64 split across multiple variables
         b64_secret = base64.b64encode((embedded_passphrase or "").encode('utf-8')).decode('ascii')
         sec_parts = _split_for_embed(b64_secret)
         for i, p in enumerate(sec_parts):
@@ -636,17 +621,13 @@ def insert_encrypted_traceback_hook(source: str, enable: bool, use_env: bool, en
     prelude.append("# TBO Encrypted Traceback Hook\n")
     prelude.append("import sys as _tbo_sys, os as _tbo_os, base64 as _tbo_b64, hashlib as _tbo_hashlib, traceback as _tbo_tb\n")
 
-    # magic parts and assembly
     for i, p in enumerate(magic_parts):
         prelude.append(f"_tbo_mg_{i} = '{p}'\n")
     prelude.append(f"_TBO_MAGIC = _tbo_b64.b64decode(" + " + ".join([f"_tbo_mg_{i}" for i in range(len(magic_parts))]) + ")\n")
 
-    # secret assembly
     prelude.extend(pre_secret_lines)
     prelude.append(secret_line)
-
     prelude.append("_TBO_TB_ITER = 100000\n")
-    # hardened KDF / keystream / encrypt / excepthook
     prelude.append("def _tbo_kdf(secret, salt):\n")
     prelude.append("    if not secret:\n")
     prelude.append("        return None\n")
@@ -700,13 +681,16 @@ def insert_encrypted_traceback_hook(source: str, enable: bool, use_env: bool, en
     lines[insert_idx:insert_idx] = prelude
     return "".join(lines)
 
-def main():
+# TBO interactive flow
+
+def tbo_transform():
     os.system("cls" if os.name == "nt" else "clear")
     from sys import stdout
     stdout.write(print_banner())
 
     infile = choose_py_file()
     if not infile:
+        press_enter_to_continue()
         return
 
     alias_input = input("Enter Alias Prefix (Press Enter For Default 'TBO_'): ")
@@ -733,10 +717,21 @@ def main():
     outfile = base + "_tbo.py"
     log_file = f"{base}_tracelog.log"
 
-    with open(infile, "r", encoding="utf-8") as f:
-        code = f.read()
+    try:
+        with open(infile, "r", encoding="utf-8") as f:
+            code = f.read()
+    except Exception as e:
+        print(f"Failed to read {infile}: {e}")
+        press_enter_to_continue()
+        return
 
-    new_code, trace_log, changes = rename_everything(code)
+    try:
+        new_code, trace_log, changes = rename_everything(code)
+    except Exception as e:
+        print(f"Error during rename: {e}")
+        press_enter_to_continue()
+        return
+
     final_code = insert_builtin_definitions(new_code, trace_log)
     final_code = fix_fstring_escapes(final_code)
 
@@ -759,19 +754,416 @@ def main():
             if env_in:
                 env_name = env_in
             final_code = insert_encrypted_traceback_hook(final_code, enable=True, use_env=True, env_name=env_name, embedded_passphrase="")
-    # else: no hook
 
-    with open(outfile, "w", encoding="utf-8") as out:
-        out.write(final_code)
+    try:
+        with open(outfile, "w", encoding="utf-8") as out:
+            out.write(final_code)
+    except Exception as e:
+        print(f"Failed to write output file: {e}")
+        press_enter_to_continue()
+        return
 
-
-    
     print(gradient_text(f"\nTransformed '{infile}' -> '{outfile}'", colors3))
     write_changes_log(changes, log_file)
-    
-    print("\nPress Enter To Exit...")
-    input()
-    os._exit(0)
+    press_enter_to_continue()
 
-if __name__ == "__main__":
-    main()
+# ========================
+# de-obfuscator
+# ========================
+
+_MAGIC = b"TBOTB1"
+_ITER = 100000
+
+
+def kdf(secret, salt):
+    if not isinstance(secret, (bytes, bytearray)):
+        secret = str(secret or "").encode("utf-8")
+    return hashlib.pbkdf2_hmac("sha256", secret, salt, _ITER, dklen=32)
+
+
+def keystream(n, key, salt):
+    out = bytearray()
+    ctr = 0
+    while len(out) < n:
+        out.extend(hashlib.sha256(key + salt + ctr.to_bytes(4, "big")).digest())
+        ctr += 1
+    return bytes(out[:n])
+
+
+def try_decrypt_line(line, secret):
+    line = line.rstrip("\r\n")
+    if not line:
+        return None
+    try:
+        raw = base64.b64decode(line, validate=True)
+    except Exception:
+        return None
+    if not raw.startswith(_MAGIC):
+        return None
+    salt = raw[len(_MAGIC):len(_MAGIC)+16]
+    ct = raw[len(_MAGIC)+16:]
+    key = kdf(secret, salt)
+    ks = keystream(len(ct), key, salt)
+    pt = bytes(a ^ b for a, b in zip(ct, ks))
+    return pt.decode("utf-8", errors="replace")
+
+
+def process_text_blocks(text, secret):
+    out_lines = []
+    dec_count = 0
+    for line in text.splitlines(True):
+        pt = try_decrypt_line(line, secret)
+        if pt is None:
+            out_lines.append(line)
+        else:
+            out_lines.append(pt if pt.endswith("\n") else pt + "\n")
+            dec_count += 1
+    return "".join(out_lines), dec_count
+
+
+def list_candidate_files():
+    files = [f for f in os.listdir(".") if os.path.isfile(f)]
+    preferred_exts = (".txt", ".log", ".out")
+    a = [f for f in files if f.lower().endswith(preferred_exts)]
+    b = [f for f in files if f not in a]
+    return a, b
+
+
+def pick_traceback_file():
+    cand_pref, cand_other = list_candidate_files()
+    if not cand_pref and not cand_other:
+        print("No Files Found In Current Directory.")
+        return None
+    groups = []
+    if cand_pref:
+        groups.append(("Text/Log Files", cand_pref))
+    if cand_other:
+        groups.append(("All Other Files", cand_other))
+    flat = []
+    for label, group in groups:
+        flat.append("--- %s ---" % label)
+        flat.extend(group)
+    selectable = [f for f in flat if not f.startswith("---")]
+    if not selectable:
+        print("No Selectable Files.")
+        return None
+    return choose_from_list("Select A File To Decode:", selectable)
+
+
+def find_tracelogs():
+    files = [f for f in os.listdir(".") if os.path.isfile(f)]
+    return sorted([f for f in files if f.endswith("_tracelog.log")])
+
+
+def choose_tracelog():
+    logs = find_tracelogs()
+    options = []
+    if logs:
+        options.extend(logs)
+    options.append("<Enter A Path Manually>")
+    options.append("<Do Not Use A Tracelog>")
+    choice = choose_from_list("\nSelect A Tracelog For Deobfuscation (Or Skip):", options)
+    if choice == "<Do Not Use A Tracelog>":
+        return None
+    if choice == "<Enter A Path Manually>":
+        path = input("Enter tracelog path: ").strip()
+        return path if path else None
+    return choice
+
+
+def load_reverse_map(tracelog_path):
+    rev = {}
+    if not tracelog_path:
+        return rev
+    if not os.path.isfile(tracelog_path):
+        print("Warning: Tracelog Not Found: %s" % tracelog_path)
+        return rev
+    try:
+        with open(tracelog_path, "r", encoding="utf-8") as f:
+            for line in f:
+                m = re.search(r":\s*(\S+)\s*->\s*(\S+)", line)
+                if m:
+                    original = m.group(1)
+                    obfuscated = m.group(2)
+                    rev[obfuscated] = original
+    except Exception as e:
+        print("Warning: Failed To Read Tracelog: %s" % e)
+    return rev
+
+
+def deobfuscate_names(text, reverse_map):
+    if not reverse_map:
+        return text
+    items = sorted(reverse_map.items(), key=lambda kv: len(kv[0]), reverse=True)
+    for obf, orig in items:
+        text = re.sub(r"\b" + re.escape(obf) + r"\b", orig, text)
+    return text
+
+
+def tbd_flow(mode):
+    # mode: "Paste", "Pick File", "Deobfuscate-Only"
+    os.system("cls" if os.name == "nt" else "clear")
+    from sys import stdout
+    stdout.write(print_banner())
+
+    if mode == "Paste":
+        print("\nPaste The Obfuscated/Encoded Traceback Line(s) Below.")
+        print("Finish By Entering A Blank Line.\n")
+        pasted = []
+        while True:
+            try:
+                line = input()
+            except EOFError:
+                break
+            if line == "":
+                break
+            pasted.append(line)
+        data = "\n".join(pasted) + ("\n" if pasted else "")
+        if not data.strip():
+            print("No Input Provided.")
+            press_enter_to_continue()
+            return
+    elif mode == "Pick File":
+        tb_file = pick_traceback_file()
+        if not tb_file:
+            print("Nothing To Do.")
+            press_enter_to_continue()
+            return
+        try:
+            with open(tb_file, "r", encoding="utf-8", errors="replace") as fh:
+                data = fh.read()
+        except Exception as e:
+            print("Failed To Read File: %s" % e)
+            press_enter_to_continue()
+            return
+    else:
+        # Deobfuscate-only
+        src_choice = choose_from_list(
+            "\nDeobfuscate-Only Mode: Choose Source",
+            ["Paste text", "Pick File"]
+        )
+        if src_choice == "Paste text":
+            print("\nPaste The Text To Deobfuscate, Then Blank Line.")
+            pasted = []
+            while True:
+                try:
+                    line = input()
+                except EOFError:
+                    break
+                if line == "":
+                    break
+                pasted.append(line)
+            data = "\n".join(pasted) + ("\n" if pasted else "")
+            if not data.strip():
+                print("No Input Provided.")
+                press_enter_to_continue()
+                return
+        else:
+            tb_file = pick_traceback_file()
+            if not tb_file:
+                print("Nothing To Do.")
+                press_enter_to_continue()
+                return
+            try:
+                with open(tb_file, "r", encoding="utf-8", errors="replace") as fh:
+                    data = fh.read()
+            except Exception as e:
+                print("Failed To Read File: %s" % e)
+                press_enter_to_continue()
+                return
+
+    # For Paste/Pick File modes ask for password
+    if mode in ("Paste", "Pick File"):
+        print("\nEnter The Password/Key Used By The App’s Encrypted-Traceback Hook.")
+        print("(Leave Empty To Use Env Var TBO_TB_KEY If Set.)")
+        try:
+            secret = getpass.getpass("Password (Hidden): ")
+        except Exception:
+            secret = input("Password (Visible): ")
+        if not secret:
+            secret = os.getenv("TBO_TB_KEY", "")
+            if not secret:
+                print("\nNo Password Provided And TBO_TB_KEY Not Set.")
+                print("Encrypted Lines (Base64 of 'TBOTB1'… e.g. 'UkZUVEIx…') Will NOT Be Decrypted.")
+                print("Showing Input As-Is.\n")
+    else:
+        secret = ""
+
+    use_map = choose_from_list("\nUse A Tracelog For Name Deobfuscation?", ["Yes", "No"])
+    reverse_map = {}
+    chosen_log = None
+    if use_map == "Yes":
+        choice = choose_tracelog()
+        if choice:
+            chosen_log = choice
+            reverse_map = load_reverse_map(choice)
+
+    if mode in ("Paste", "Pick File"):
+        result, dec_count = process_text_blocks(data, secret)
+    else:
+        result, dec_count = data, 0
+
+    if reverse_map:
+        result = deobfuscate_names(result, reverse_map)
+
+    print(gradient_text(f"\n========= Decoded Output =========\n", colors))
+    print(result, end="" if result.endswith("\n") else "\n")
+    print(gradient_text(f"\n========= Summary =========\n", colors))
+    print("Decrypted Lines: %d" % dec_count)
+    if chosen_log:
+        print("Deobfuscation Map: %s" % chosen_log)
+    else:
+        print("Deobfuscation Map: <none>")
+
+    press_enter_to_continue()
+
+
+def tbd_deobfuscate_file():
+    """Deobfuscate an unencrypted traceback by picking a file."""
+    os.system("cls" if os.name == "nt" else "clear")
+    from sys import stdout
+    stdout.write(print_banner())
+
+    tb_file = pick_traceback_file()
+    if not tb_file:
+        print("Nothing To Do.")
+        press_enter_to_continue()
+        return
+    try:
+        with open(tb_file, "r", encoding="utf-8", errors="replace") as fh:
+            data = fh.read()
+    except Exception as e:
+        print("Failed To Read File: %s" % e)
+        press_enter_to_continue()
+        return
+
+    # no decryption for unencrypted traceback
+    secret = ""
+
+    use_map = choose_from_list("\nUse A Tracelog For Name Deobfuscation?", ["Yes", "No"])
+    reverse_map = {}
+    chosen_log = None
+    if use_map == "Yes":
+        choice = choose_tracelog()
+        if choice:
+            chosen_log = choice
+            reverse_map = load_reverse_map(choice)
+
+    result, dec_count = data, 0
+
+    if reverse_map:
+        result = deobfuscate_names(result, reverse_map)
+
+    print(gradient_text(f"\n========= Decoded Output =========\n", colors))
+    print(result, end="" if result.endswith("\n") else "\n")
+    print(gradient_text(f"\n========= Summary =========\n", colors))
+    print("Decrypted Lines: %d" % dec_count)
+    if chosen_log:
+        print("Deobfuscation Map: %s" % chosen_log)
+    else:
+        print("Deobfuscation Map: <none>")
+
+    press_enter_to_continue()
+
+
+def tbd_deobfuscate_paste():
+    """Deobfuscate an unencrypted traceback provided via paste/clipboard."""
+    os.system("cls" if os.name == "nt" else "clear")
+    from sys import stdout
+    stdout.write(print_banner())
+
+    print("\nPaste The Obfuscated/Encoded Traceback Line(s) Below.")
+    print("Finish By Entering A Blank Line.\n")
+    pasted = []
+    while True:
+        try:
+            line = input()
+        except EOFError:
+            break
+        if line == "":
+            break
+        pasted.append(line)
+    data = "\n".join(pasted) + ("\n" if pasted else "")
+    if not data.strip():
+        print("No Input Provided.")
+        press_enter_to_continue()
+        return
+
+    # no decryption for unencrypted traceback
+    secret = ""
+
+    use_map = choose_from_list("\nUse A Tracelog For Name Deobfuscation?", ["Yes", "No"])
+    reverse_map = {}
+    chosen_log = None
+    if use_map == "Yes":
+        choice = choose_tracelog()
+        if choice:
+            chosen_log = choice
+            reverse_map = load_reverse_map(choice)
+
+    result, dec_count = data, 0
+
+    if reverse_map:
+        result = deobfuscate_names(result, reverse_map)
+
+    print(gradient_text(f"\n========= Decoded Output =========\n", colors))
+    print(result, end="" if result.endswith("\n") else "\n")
+    print(gradient_text(f"\n========= Summary =========\n", colors))
+    print("Decrypted Lines: %d" % dec_count)
+    if chosen_log:
+        print("Deobfuscation Map: %s" % chosen_log)
+    else:
+        print("Deobfuscation Map: <none>")
+
+    press_enter_to_continue()
+
+
+# Replace main menu with nested choices
+def main_menu():
+    while True:
+        os.system("cls" if os.name == "nt" else "clear")
+        from sys import stdout
+        stdout.write(print_banner())
+        print(gradient_text("Main Menu:", colors))
+        print("1. Obfuscate/encrypt traceback in Python file")
+        print("2. Decrypt encrypted traceback")
+        print("3. Deobfuscate unencrypted traceback")
+
+        print("Q. Quit")
+
+        choice = input("\nEnter choice: ").strip().lower()
+        if not choice:
+            continue
+        if choice == '1':
+            tbo_transform()
+            continue
+        if choice == '2':
+            # Decrypt encrypted traceback: prompt for source
+            os.system("cls" if os.name == "nt" else "clear")
+            from sys import stdout
+            stdout.write(print_banner())
+            sub = choose_from_list(gradient_text("Choose Input Mode:", colors), ["From file", "From clipboard (paste)"])
+            if sub == "From file":
+                tbd_flow('Pick File')
+            else:
+                tbd_flow('Paste')
+            continue
+        if choice == '3':
+            # Deobfuscate unencrypted traceback: prompt for source
+            os.system("cls" if os.name == "nt" else "clear")
+            from sys import stdout
+            stdout.write(print_banner())
+            sub = choose_from_list(gradient_text("Choose Input Mode:", colors), ["From file", "From clipboard (paste)"])
+            if sub == "From file":
+                tbd_deobfuscate_file()
+            else:
+                tbd_deobfuscate_paste()
+            continue
+        if choice == 'q':
+            print("Goodbye.")
+            return
+        print("Unknown choice.")
+        press_enter_to_continue()
+
+if __name__ == '__main__':
+    main_menu()
